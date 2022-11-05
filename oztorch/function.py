@@ -1,22 +1,23 @@
+from typing import TypeVar, Generic 
+
 from abc import abstractmethod
 
-from .tensor import Tensor
-from .autograd import Context, History
+from .autograd import Context, History, Variable
 
-
-class Function:
+T = TypeVar('T', bound=Variable)
+class Function(Generic[T]):
   @classmethod
   @abstractmethod
-  def forward(cls, ctx: Context, *inps: Tensor) -> Tensor:
+  def forward(cls, ctx: Context, *inps: T) -> T:
     ...
 
   @classmethod
   @abstractmethod
-  def backward(cls, ctx: Context, *inps: Tensor) -> tuple[Tensor, ...]:
+  def backward(cls, ctx: Context, *inps: T) -> tuple[T, ...]:
     ...
 
   @classmethod
-  def apply(cls, *vals: Tensor) -> Tensor:
+  def apply(cls, *vals: T) -> T:
 
     # determines if this function call needs to be added to the graph
     # i.e. if any of its inputs requires grad
@@ -39,4 +40,4 @@ class Function:
     history = History(cls, ctx, vals) if need_grad else None
 
     # Create a new tensor from the out and history.
-    return Tensor(out._storage, out._size, stride = out._stride, requires_grad = need_grad, history = history)
+    return out._copy_wo_grad_info(need_grad, history)
