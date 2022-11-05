@@ -1,16 +1,18 @@
-from math import prod
 from typing import Optional, Sequence, overload
-
 from .commonTyping import IntTuple, ValidPyType
 from .dtype import dtype
+
+from math import prod
+
 import oztorch
+from .autograd import History
 
 
 ### -----------------------------
 ## Tensor class
 ### -----------------------------
 class Tensor:
-  def __init__(self, storage: list[ValidPyType], size: IntTuple, /, stride: Optional[IntTuple] = None, dtype: Optional[dtype] = None):
+  def __init__(self, storage: list[ValidPyType], size: IntTuple, /, stride: Optional[IntTuple] = None, dtype: Optional[dtype] = None, requires_grad: bool = False, history: Optional[History] = None):
     # set backing fields    
     self._size = size
     self._stride = stride or _calculate_standard_strides(size)
@@ -18,6 +20,10 @@ class Tensor:
 
     #cast storage to dtype (or minimal dtype)
     _cast_list_in_place(self._storage, dtype)
+
+    #autograd stuff
+    self._history = history or History() #default = empty history (user created)
+    self._requires_grad = requires_grad
 
   ## Size method & overloads ------------------
   @overload
@@ -68,6 +74,44 @@ class Tensor:
   # Returns the strides of the tensor
   def stride(self) -> IntTuple:
     return self._stride
+
+
+  ### -----------------------------
+  ## Autograd stuff
+  ### -----------------------------
+  @property
+  def requires_grad(self) -> bool:
+    """
+    False by Default. Can only be manually set for leaf tensors.
+    
+    PyTorch equivalent: https://pytorch.org/docs/stable/generated/torch.Tensor.requires_grad.html
+    """
+    return self._requires_grad
+
+  @requires_grad.setter
+  def requires_grad(self, x):
+    if (self.is_leaf):
+      self._requires_grad = x
+    else:
+      raise Exception("You can only change the requires_grad value for leaf tensors.")
+
+  @property
+  def is_leaf(self) -> bool:
+    """
+    The following are leaf `Tensor`s:
+     - All Tensors with `require_grad` set to `False`.
+     - For Tensors with `require_grad` set to `True`, only those directly created by the user is a leaf. In other words, they are not the result of a `Function` and so their `_history.grad_fn` is `None`.
+
+    PyTorch equivalent: https://pytorch.org/docs/stable/generated/torch.Tensor.is_leaf.html
+    """
+    return not self.requires_grad or self._history.grad_fn is None
+
+  def detach(self) -> 'Tensor':
+    """
+    Creates a copy of this `Tensor` (with the same underlying storage)
+    without a history, and with `requires_grad` set to `False`
+    """
+    return Tensor(self._storage, self._size, stride=self._stride)
 
 
 ### -----------------------------
@@ -133,18 +177,18 @@ def _cast_list_in_place(storage: list[ValidPyType], dtype: Optional[dtype]):
 ## Static methods
 ### -----------------------------
 #creates a Tensor using an n-dim python sequence (of valid dtypes)
-def tensor(data: Sequence | ValidPyType, /, dtype: Optional[dtype] = None) -> Tensor:
+def tensor(data: Sequence | ValidPyType, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
   flattened_data, size = _clean_pyTensor(data)
-  return Tensor(flattened_data, size, dtype=dtype)
+  return Tensor(flattened_data, size, dtype=dtype, requires_grad = requires_grad)
 
 # Returns a tensor of full zeros of given size
-def full(size: IntTuple, fill_value: ValidPyType, /, dtype: Optional[dtype] = None) -> Tensor:
+def full(size: IntTuple, fill_value: ValidPyType, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
   numel = prod(size)
   data = [fill_value]*numel
-  return Tensor(data, size, dtype=dtype)
+  return Tensor(data, size, dtype=dtype, requires_grad = requires_grad)
 
-def zeros(size: IntTuple, /, dtype: Optional[dtype] = None) -> Tensor:
-  return full(size, 0.0, dtype=dtype)
+def zeros(size: IntTuple, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
+  return full(size, 0.0, dtype=dtype, requires_grad = requires_grad)
 
-def ones(size: IntTuple, /, dtype: Optional[dtype] = None) -> Tensor:
-  return full(size, 1.0, dtype=dtype)
+def ones(size: IntTuple, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
+  return full(size, 1.0, dtype=dtype, requires_grad = requires_grad)
