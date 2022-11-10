@@ -4,6 +4,7 @@ from .dtype import dtype
 
 from math import prod
 
+from .functions import Neg
 from .storage import Storage
 from .autograd import History, Variable
 
@@ -78,6 +79,9 @@ class Tensor(Variable):
 
   def __repr__(self) -> str:
     return self.storage.to_string()
+
+  def __neg__(self) -> 'Tensor':
+    return Neg.apply(self)
 
 
   ### -----------------------------
