@@ -4,7 +4,7 @@ from .dtype import dtype
 
 from math import prod
 
-import oztorch
+from .storage import Storage
 from .autograd import History, Variable
 
 
@@ -12,17 +12,13 @@ from .autograd import History, Variable
 ## Tensor class
 ### -----------------------------
 class Tensor(Variable):
-  def __init__(self, storage: list[ValidPyType], size: IntTuple, /, stride: Optional[IntTuple] = None, dtype: Optional[dtype] = None, requires_grad: bool = False, history: Optional[History] = None):
+  def __init__(self, storage: Storage, /, requires_grad: bool = False, history: Optional[History] = None):
     # Variable stuff
     super().__init__(requires_grad, history)
 
-    # set backing fields    
-    self._size = size
-    self._stride = stride or _calculate_standard_strides(size)
-    self._storage = storage
+    # init backing storage
+    self.storage = storage
 
-    #cast storage to dtype (or minimal dtype)
-    _cast_list_in_place(self._storage, dtype)
 
   ## Size method & overloads ------------------
   @overload
@@ -48,9 +44,9 @@ class Tensor(Variable):
 
   def size(self, dim: Optional[int] = None) -> IntTuple | int:
     if dim is None:
-      return self._size
+      return self.storage.size
     else:
-      return self._size[dim]
+      return self.storage.size[dim]
   ## ---------------------------------------
 
   def dim(self) -> int:
@@ -68,11 +64,20 @@ class Tensor(Variable):
 
     PyTorch equivalent: https://pytorch.org/docs/stable/generated/torch.numel.html
     """
-    return prod(self.size())
+    return self.storage.numel()
 
   # Returns the strides of the tensor
   def stride(self) -> IntTuple:
-    return self._stride
+    return self.storage.stride
+  
+  def __getitem__(self, key: IntTuple | int) -> ValidPyType:
+    return self.storage[key]
+
+  def __setitem__(self, key: IntTuple | int, val: ValidPyType):
+    self.storage[key] = val
+
+  def __repr__(self) -> str:
+    return self.storage.to_string()
 
 
   ### -----------------------------
@@ -83,20 +88,12 @@ class Tensor(Variable):
     Creates a copy of this `Tensor` (with the same underlying storage)
     without a history, and with `requires_grad` set to `False`
     """
-    return Tensor(self._storage, self._size, stride=self._stride, requires_grad=requires_grad, history=history)
+    return Tensor(self.storage, requires_grad=requires_grad, history=history)
 
 
 ### -----------------------------
 ## Private methods
 ### -----------------------------
-def _calculate_standard_strides(size: IntTuple) -> IntTuple:
-  ls = [1]
-  product = 1
-  for i in range(len(size)):
-    product*=size[i]
-    ls.insert(0, product)
-  return tuple(ls)
-
 def _clean_PyTensor_helper(data: Sequence | ValidPyType, dim: int, sizes: list) -> list[ValidPyType]:
   if isinstance(data, Sequence):
     size = len(data)
@@ -117,32 +114,12 @@ def _clean_PyTensor_helper(data: Sequence | ValidPyType, dim: int, sizes: list) 
   else:
     return [data]
 
-def _clean_pyTensor(data: Sequence | ValidPyType) -> tuple[list[ValidPyType], IntTuple]:
+def _clean_PyTensor(data: Sequence | ValidPyType) -> tuple[list[ValidPyType], IntTuple]:
   size = []
   flattened_data = _clean_PyTensor_helper(data, 0, size)
   if size[-1] == -1:
     size.pop() #remove single element psuedo-dimension
   return flattened_data, tuple(size)
-
-def _cast_list_in_place(storage: list[ValidPyType], dtype: Optional[dtype]):
-  # determine minimal numeric type
-  if dtype is None:
-    highest_rank = -1
-    for i in range(len(storage)):
-      if isinstance(storage[i], bool) and highest_rank < 0:
-        highest_rank = 0
-      elif isinstance(storage[i], int) and highest_rank < 1:
-        highest_rank = 1
-      else: #must be float
-        highest_rank = 2
-    
-    if highest_rank == -1:
-      highest_rank = 2 #default is float64
-    dtype = oztorch.default_dtype_list[highest_rank]
-  
-  # cast all values
-  for i in range(len(storage)):
-    storage[i] = dtype.cast_fn(storage[i])
 
 
 ### -----------------------------
@@ -150,14 +127,13 @@ def _cast_list_in_place(storage: list[ValidPyType], dtype: Optional[dtype]):
 ### -----------------------------
 #creates a Tensor using an n-dim python sequence (of valid dtypes)
 def tensor(data: Sequence | ValidPyType, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
-  flattened_data, size = _clean_pyTensor(data)
-  return Tensor(flattened_data, size, dtype=dtype, requires_grad = requires_grad)
+  flattened_data, size = _clean_PyTensor(data)
+  return Tensor(Storage(flattened_data, size, dtype=dtype), requires_grad = requires_grad)
 
-# Returns a tensor of full zeros of given size
 def full(size: IntTuple, fill_value: ValidPyType, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
   numel = prod(size)
   data = [fill_value]*numel
-  return Tensor(data, size, dtype=dtype, requires_grad = requires_grad)
+  return Tensor(Storage(data, size, dtype=dtype), requires_grad = requires_grad)
 
 def zeros(size: IntTuple, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
   return full(size, 0.0, dtype=dtype, requires_grad = requires_grad)
