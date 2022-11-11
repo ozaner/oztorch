@@ -1,3 +1,4 @@
+from itertools import zip_longest
 from typing import Optional
 
 from math import prod
@@ -44,7 +45,7 @@ class Storage():
   def to_string(self) -> str:
     s = ""
     for raw_index in range(self.numel()):
-      index = _contiguous_raw_to_index(raw_index, self.size)
+      index = contiguous_raw_to_index(raw_index, self.size)
       l = ""
       for i in range(len(index) - 1, -1, -1):
         if index[i] == 0:
@@ -68,7 +69,47 @@ class Storage():
 
 
 ### -----------------------------
-## Private methods
+## Public Helper Functions
+### -----------------------------
+def broadcast_shape(s1: IntTuple, s2: IntTuple) -> IntTuple:
+  size: list[int] = []
+  for a, b in zip_longest(reversed(s1), reversed(s2)):
+    dim = 0
+    if a is None:
+      dim = b
+    elif b is None:
+      dim = a
+    elif a == 1:
+      dim = b
+    elif b == 1:
+      dim = a
+    elif a == b:
+      dim = a
+    else:
+      raise Exception(f"Shape {s1} and shape {s2} cannot be broadcasted.")
+    size.append(dim)
+  return tuple(reversed(size))
+
+def broadcast_index(b_index: IntTuple, broadcasted_s: IntTuple, s: IntTuple) -> IntTuple:
+  out_index = [0]*len(s)
+  missing_dims = len(broadcasted_s) - len(s)
+  for i, d in enumerate(s):
+    if d > 1:
+      out_index[i] = b_index[i + missing_dims]
+    else:
+      out_index[i] = 0
+  return tuple(out_index)
+
+def contiguous_raw_to_index(ordinal: int, size: IntTuple) -> IntTuple:
+  output: list[int] = [0]*len(size)
+  for i, base in reversed(list(enumerate(size))):
+      output[i] = ordinal % base
+      ordinal = ordinal // base
+  return tuple(output)
+
+
+### -----------------------------
+## Private Helper Functions
 ### -----------------------------
 def _calculate_standard_stride(size: IntTuple) -> IntTuple:
   ls = [0]*len(size)
@@ -97,10 +138,3 @@ def _cast_list_in_place(storage: list[ValidPyType], dtype: Optional[dtype]):
   # cast all values
   for i in range(len(storage)):
     storage[i] = dtype.cast_fn(storage[i])
-
-def _contiguous_raw_to_index(ordinal: int, size: IntTuple) -> IntTuple:
-  output: list[int] = [0]*len(size)
-  for i, base in reversed(list(enumerate(size))):
-      output[i] = ordinal % base
-      ordinal = ordinal // base
-  return tuple(output)
