@@ -4,7 +4,7 @@ from .dtype import dtype
 
 from math import prod
 
-from .functions import Neg
+from .functions import Log, Neg, Add
 from .storage import Storage
 from .autograd import History, Variable
 
@@ -13,9 +13,13 @@ from .autograd import History, Variable
 ## Tensor class
 ### -----------------------------
 class Tensor(Variable):
+  TOTAL_TENSORS_COUNT = 0
+
   def __init__(self, storage: Storage, /, requires_grad: bool = False, history: Optional[History] = None):
     # Variable stuff
     super().__init__(requires_grad, history)
+    self.unique_id = Tensor.TOTAL_TENSORS_COUNT
+    Tensor.TOTAL_TENSORS_COUNT += 1
 
     # init backing storage
     self.storage = storage
@@ -83,16 +87,28 @@ class Tensor(Variable):
   def __neg__(self) -> 'Tensor':
     return Neg.apply(self)
 
+  def __add__(self, b: 'Tensor') -> 'Tensor':
+    return Add.apply(self, b)
+
 
   ### -----------------------------
   ## Variable stuff (autograd)
   ### -----------------------------
+  def backward(self, grad_output: Optional['Tensor'] = None):
+    if grad_output is None:
+        assert self.size() == (1,), "Must provide grad_output if non-scalar"
+        grad_output = ones((1,))
+    super().backward(grad_output)
+
   def _copy_wo_grad_info(self, requires_grad: bool, history: Optional[History]) -> 'Tensor':
     """
     Creates a copy of this `Tensor` (with the same underlying storage)
     without a history, and with `requires_grad` set to `False`
     """
     return Tensor(self.storage, requires_grad=requires_grad, history=history)
+
+  def _create_empty_grad(self) -> 'Tensor':
+    return zeros(self.size())
 
 
 ### -----------------------------
@@ -144,3 +160,6 @@ def zeros(size: IntTuple, /, dtype: Optional[dtype] = None, requires_grad: bool 
 
 def ones(size: IntTuple, /, dtype: Optional[dtype] = None, requires_grad: bool = False) -> Tensor:
   return full(size, 1.0, dtype=dtype, requires_grad = requires_grad)
+
+def log(t: Tensor) -> Tensor:
+  return Log.apply(t)

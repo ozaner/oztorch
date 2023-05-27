@@ -1,13 +1,18 @@
-from typing import Generic, Optional, Sequence, TypeVar, Self
+from typing import Generic, Iterable, Optional, Sequence, TypeVar, Self
 
 from dataclasses import dataclass
 from abc import abstractmethod
 
 
 class Variable():
+
+  # every variable of a certain type should have a unique identifier.
+  unique_id: int
+
   def __init__(self, requires_grad: bool = False, history: Optional['History[Self]'] = None):
     self._requires_grad = requires_grad
     self._history = history or History() #default = empty history (user created)
+    self.grad = None #grad unset by default
 
   @property
   def requires_grad(self) -> bool:
@@ -39,8 +44,92 @@ class Variable():
   def detach(self) -> Self:
     return self._copy_wo_grad_info(False, None)
 
+  def accumulate_derivative(self, x: Self) -> None:
+    """
+    Add `x` to the the derivative accumulated on this variable.
+    Should only be called during autodifferentiation on leaf variables.
+
+    Args:
+        x : value to be accumulated
+    """
+    assert self.is_leaf, "Only leaf variables can have derivatives."
+    if self.grad is None:
+      self.grad = self._create_empty_grad()
+    self.grad += x
+
+  def topological_sort(self) -> Iterable[Self]:
+    """
+    Computes the topological order of the computation graph with this variable as the root.
+
+    Returns:
+        Non-constant Variables in topological order starting from the right.
+    """
+    result: list[Variable] = []
+    seen = set()
+
+    def helper(node: Variable) -> None:
+      if node.unique_id in seen or not node.requires_grad:
+        return #skip already processed vars or vars that don't 'require_grad'
+      if not node.is_leaf:
+        for neighbor in node._history.inputs:
+          if node.requires_grad:
+            helper(neighbor)
+      seen.add(node.unique_id)
+      result.insert(0, node)
+
+    helper(self) #call helper on root
+    return result
+
+  def backward(self, root_der: Self):
+    """
+    Runs backpropagation on the computation graph in order to compute derivatives for the leave nodes.
+    Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
+
+    Args:
+        root_der: Its derivative that we want to propagate backward to the leaves.
+    """
+    queue = self.topological_sort()
+    var_dict = {}
+    var_dict[self.unique_id] = [self, root_der]  # add root
+
+    for node in queue:
+      if node.is_leaf:
+        continue # leafs don't need to be chained
+
+      # topos ensures parents have been processed and are in dict
+      for var, der in node.chain_rule(var_dict[node.unique_id][1]):
+        if (var.unique_id in var_dict):  # already in dict -> another partial derivative
+          var_dict[var.unique_id][1] += der
+        else:
+          var_dict[var.unique_id] = [var, der]
+
+        if var.is_leaf:
+          var.accumulate_derivative(der)
+
+  def chain_rule(self, d_output: Self) -> Iterable[tuple[Self, Self]]:
+    h = self._history
+    assert h is not None
+    assert h.grad_fn is not None
+    assert h.ctx is not None
+
+    x = h.grad_fn.backward(h.ctx, d_output)
+    if not isinstance(x, tuple):
+      x = (x,) #some backwards funcs only ouput a single var
+    assert len(x) == len(h.inputs), f"Bug in function {h.grad_fn}"
+    # return [
+    #   (inp, inp.expand(d_in))
+    #   for inp, d_in in zip(h.inputs, x)
+    # ]
+    return zip(h.inputs, x)
+
   @abstractmethod
   def _copy_wo_grad_info(self, requires_grad: bool, history: Optional['History[Self]']) -> Self: ...
+
+  @abstractmethod
+  def _create_empty_grad(self) -> Self: ...
+
+  @abstractmethod
+  def __add__(self, b: Self): ...
 
 
 T = TypeVar('T', bound=Variable)
@@ -83,7 +172,7 @@ class Function(Generic[T]):
 
   @classmethod
   @abstractmethod
-  def backward(cls, ctx: Context, *inps: T) -> tuple[T, ...]:
+  def backward(cls, ctx: Context, *inps: T) -> T | tuple[T, ...]:
     ...
 
   @classmethod
